@@ -4,6 +4,7 @@ import pymongo
 from src.porter import PorterStemmer
 from threading import Thread, Lock
 import math
+from concurrent.futures import ThreadPoolExecutor
 
 
 class Mapper(object):
@@ -107,33 +108,25 @@ class Mapper(object):
         if isinstance(raw_search, str):
             raw_search = self.execute_operation(previous, "", " ")
         cosine = dict()
+        word_count = len(word_queue)
         for document in list(raw_search.keys()):
             words = raw_search[document]
-            c = self.calculate_cosine(document, words, query_count)
+            c = self.calculate_cosine(document, words, query_count, word_count)
             cosine[c] = document
         print("Documente pentru <"+query+"> :")
         for key in sorted(list(cosine.keys())):
             print(cosine[key] + ": " + str(key))
 
-    def calculate_cosine(self, document, words, query_dict):
+    def calculate_cosine(self, document, words, query_dict, word_count):
         value = 0
         for word in list(query_dict.keys()):
             try:
+                # print(document, word, words[word])
                 value += words[word] * query_dict[word]
             except KeyError:
                 pass
-        value = value/(Mapper.calculate_norm(query_dict) * Mapper.calculate_norm(self.get_words(document)))
+        value = value/(Mapper.calculate_norm(query_dict, word_count) * self.get_document_norm(document))
         return value
-
-    def get_words(self, document):
-        database = self.database_connection["config"]
-        try:
-            self.db_lock.acquire()
-            table = database["index_direct"]
-            output = table.find_one({"document": document})["words"]
-        finally:
-            self.db_lock.release()
-        return output
 
     def execute_operation(self, w1, w2, ope):
         output = {}
@@ -210,6 +203,7 @@ class Mapper(object):
             else:
                 word.append(letter)
                 word_to_lower.append(letter.lower())
+        return True
 
     def map_file_inverse(self, filename):
         database = self.database_connection["config"]
@@ -217,6 +211,7 @@ class Mapper(object):
         for word in words:
             count = words[word]
             self.add_word_inverse("index_invers", filename, word, count)
+        return True
 
     def add_word_inverse(self, collection, filename, word, count):
         database = self.database_connection["config"]
@@ -227,22 +222,38 @@ class Mapper(object):
             self.db_lock.release()
 
     def map_direct(self):
-        threads = []
-        for filename in self.file_names:
-            thread = Thread(target=self.map_file_direct, args=(filename,))
-            thread.start()
-            threads.append(thread)
-        for thread in threads:
-            thread.join()
+        with ThreadPoolExecutor(4) as executor:
+            result = executor.map(self.map_file_direct, self.file_names)
 
     def map_inverse(self):
-        threads = []
-        for filename in self.file_names:
-            thread = Thread(target=self.map_file_inverse, args=(filename,))
-            thread.start()
-            threads.append(thread)
-        for thread in threads:
-            thread.join()
+        with ThreadPoolExecutor(4) as executor:
+            result = executor.map(self.map_file_inverse, self.file_names)
+
+    def map_document_norms(self):
+        with ThreadPoolExecutor(4) as executor:
+            result = executor.map(self.get_one_norm, self.file_names)
+
+    def get_one_norm(self, document):
+        num_doc = len(self.file_names)
+        database = self.database_connection["config"]
+        collection = database["index_direct"]
+        words = collection.find_one({"document": document})["words"]
+        num_words = len(words)
+        sum = 0
+        for word in words:
+            num_appar = words[word]
+            documents = database["index_invers"].find_one({"word": word })
+            num_doc_appar = len(documents)
+            tfk = num_appar/num_words
+            idfk = math.log(num_doc/num_doc_appar)
+            sum += (tfk*idfk)**2
+        norm = math.sqrt(sum)
+        try:
+            self.db_lock.acquire()
+            collection.update_one({ "document": document}, {"$set": {"norm": norm}})
+        finally:
+            self.db_lock.release()
+        return norm
 
     def add_word_to_database(self, collection, document, word):     # index direct
         database = self.database_connection["config"]
@@ -273,12 +284,17 @@ class Mapper(object):
         return False
 
     @staticmethod
-    def calculate_norm(values):
+    def calculate_norm(values, word_count):
         value = 0
         for word in values:
-            count = values[word]
+            count = values[word]/word_count
             value += count * count
         return math.sqrt(value)
+
+    def get_document_norm(self, document):
+        database = self.database_connection["config"]
+        collection = database["index_direct"]
+        return collection.find_one({"document": document})["norm"]
 
 
 if __name__ == "__main__":
@@ -287,6 +303,7 @@ if __name__ == "__main__":
     m = Mapper("..\\input")
     # m.map_direct()
     # m.map_inverse()
+    # m.map_document_norms()
     m.input_query()
     print("--- %s seconds ---" % (time.time() - start_time))
 
