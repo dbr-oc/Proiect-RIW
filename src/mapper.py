@@ -114,8 +114,8 @@ class Mapper(object):
             c = self.calculate_cosine(document, words, query_count, word_count)
             cosine[c] = document
         print("Documente pentru <"+query+"> :")
-        for key in sorted(list(cosine.keys())):
-            print(cosine[key] + ": " + str(key))
+        for key in sorted(list(cosine.keys()), reverse=True):
+            print(cosine[key])  # + ": " + str(key))
 
     def calculate_cosine(self, document, words, query_dict, word_count):
         value = 0
