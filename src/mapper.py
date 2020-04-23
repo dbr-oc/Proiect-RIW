@@ -242,7 +242,7 @@ class Mapper(object):
         sum = 0
         for word in words:
             num_appar = words[word]
-            documents = database["index_invers"].find_one({"word": word })
+            documents = database["index_invers"].find_one({"word": word})
             num_doc_appar = len(documents)
             tfk = num_appar/num_words
             idfk = math.log(num_doc/num_doc_appar)
@@ -250,7 +250,7 @@ class Mapper(object):
         norm = math.sqrt(sum)
         try:
             self.db_lock.acquire()
-            collection.update_one({ "document": document}, {"$set": {"norm": norm}})
+            collection.update_one({"document": document}, {"$set": {"norm": norm}})
         finally:
             self.db_lock.release()
         return norm
